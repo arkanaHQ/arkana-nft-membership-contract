@@ -182,6 +182,9 @@ mod tests {
                 ..Default::default()
             }),
             None,
+            AccountId::new_unchecked("arkanacorecontract".to_string()),
+            U64(3600),
+            U64(5),
         )
     }
 

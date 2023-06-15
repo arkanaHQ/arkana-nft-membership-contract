@@ -43,7 +43,7 @@
     "near-workspaces-ava": "^1.1.0",
     "nft.storage": "^6.2.0",
     "raen-cli": "^0.0.5",
-    "ts-node": "^10.4.0",
+    "ts-node": "^10.9.1",
     "typedoc": "^0.22.15",
     "typescript": "^4.5.5",
     "witme": "^0.2.5"

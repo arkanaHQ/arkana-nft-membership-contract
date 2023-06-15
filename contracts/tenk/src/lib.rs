@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use linkdrop::LINKDROP_DEPOSIT;
 use near_contract_standards::non_fungible_token::{
     metadata::{NFTContractMetadata, TokenMetadata, NFT_METADATA_SPEC},
@@ -7,7 +9,7 @@ use near_sdk::{
     borsh::{self, BorshDeserialize, BorshSerialize},
     collections::{LazyOption, LookupMap, UnorderedSet},
     env, ext_contract,
-    json_types::{Base64VecU8, U128},
+    json_types::{Base64VecU8, U128, U64},
     log, near_bindgen, require,
     serde::{Deserialize, Serialize},
     witgen, AccountId, Balance, BorshStorageKey, Gas, PanicOnDefault, Promise, PromiseOrValue,
@@ -27,6 +29,9 @@ mod standards;
 mod types;
 mod util;
 mod views;
+
+pub mod external;
+pub use crate::external::*;
 
 use payout::*;
 use raffle::Raffle;
@@ -53,13 +58,15 @@ pub struct Contract {
 
     /// extension for generating media links
     media_extension: Option<String>,
+    arkana_core_contract: AccountId,
+    max_points: u64,
+    point_per_seconds: u64, // 500 == 0.5 per second, 1000 == 1 point per second
+    last_claim_points: LookupMap<TokenId, u64>,
 }
 
 const GAS_REQUIRED_FOR_LINKDROP: Gas = Gas(parse_gas!("40 Tgas") as u64);
 const GAS_REQUIRED_TO_CREATE_LINKDROP: Gas = Gas(parse_gas!("20 Tgas") as u64);
-const TECH_BACKUP_OWNER: &str = "willem.near";
 const MAX_DATE: u64 = 8640000000000000;
-// const GAS_REQUIRED_FOR_LINKDROP_CALL: Gas = Gas(5_000_000_000_000);
 
 #[ext_contract(ext_self)]
 trait Linkdrop {
@@ -86,6 +93,7 @@ enum StorageKey {
     LinkdropKeys,
     Whitelist,
     Admins,
+    LastClaimPoints,
 }
 
 #[near_bindgen]
@@ -97,6 +105,9 @@ impl Contract {
         size: u32,
         sale: Option<Sale>,
         media_extension: Option<String>,
+        arkana_core_contract: AccountId,
+        max_points: U64,
+        point_per_seconds: U64,
     ) -> Self {
         Self::new(
             owner_id,
@@ -104,6 +115,9 @@ impl Contract {
             size,
             sale.unwrap_or_default(),
             media_extension,
+            arkana_core_contract,
+            max_points,
+            point_per_seconds,
         )
     }
 
@@ -114,6 +128,9 @@ impl Contract {
         size: u32,
         sale: Sale,
         media_extension: Option<String>,
+        arkana_core_contract: AccountId,
+        max_points: U64,
+        point_per_seconds: U64,
     ) -> Self {
         metadata.assert_valid();
         sale.validate();
@@ -139,6 +156,10 @@ impl Contract {
             sale,
             admins: UnorderedSet::new(StorageKey::Admins),
             media_extension,
+            arkana_core_contract,
+            max_points: max_points.0,
+            point_per_seconds: point_per_seconds.0,
+            last_claim_points: LookupMap::new(StorageKey::LastClaimPoints),
         }
     }
 
@@ -228,6 +249,70 @@ impl Contract {
         }
     }
 
+    pub fn get_max_points(&self) -> U64 {
+        U64(self.max_points)
+    }
+
+    pub fn get_point_per_seconds(&self) -> U64 {
+        U64(self.point_per_seconds)
+    }
+
+    pub fn get_last_claimed_points_ts(&self, token_id: TokenId) -> U64 {
+        U64(self.last_claim_points.get(&token_id).unwrap())
+    }
+
+    pub fn get_current_generated_points(&self, token_id: TokenId) -> U64 {
+        let current_timestamp = env::block_timestamp();
+        let point_generated = min(
+            (self.point_per_seconds
+                * (current_timestamp - self.last_claim_points.get(&token_id).unwrap())
+                / 1000000000)
+                / 1000,
+            self.max_points,
+        );
+
+        U64(point_generated)
+    }
+
+    #[private] // only called by the contract
+    pub fn set_max_points(&mut self, max_points: U64) {
+        self.max_points = max_points.0;
+    }
+
+    #[private] // only called by the contract
+    pub fn set_point_per_seconds(&mut self, point_per_seconds: U64) {
+        self.point_per_seconds = point_per_seconds.0;
+    }
+
+    pub fn claim_points(&mut self, token_id: TokenId) -> Promise {
+        let predecessor_id = env::predecessor_account_id();
+
+        let token = self.tokens.nft_token(token_id.clone()).unwrap();
+
+        assert_eq!(predecessor_id, token.owner_id, "Predecessor is not owner");
+
+        let current_timestamp = env::block_timestamp();
+        let point_generated = min(
+            (self.point_per_seconds
+                * (current_timestamp - self.last_claim_points.get(&token_id).unwrap())
+                / 1000000000)
+                / 1000,
+            self.max_points,
+        );
+
+        assert!(point_generated > 0, "Point generated < 1");
+
+        self.last_claim_points.insert(&token_id, &current_timestamp);
+
+        arkana_core_contract::generate_points(
+            predecessor_id,
+            U64(point_generated),
+            self.arkana_core_contract.clone(),
+            0,
+            Gas(5 * TGAS),
+        )
+    }
+
     // Private methods
     fn assert_deposit(&self, num: u16, account_id: &AccountId) {
         require!(
@@ -264,7 +349,7 @@ impl Contract {
     }
 
     fn is_owner(&self, minter: &AccountId) -> bool {
-        minter.as_str() == self.tokens.owner_id.as_str() || minter.as_str() == TECH_BACKUP_OWNER
+        minter.as_str() == self.tokens.owner_id.as_str()
     }
 
     fn assert_owner_or_admin(&self) {
@@ -299,7 +384,12 @@ impl Contract {
 
     fn draw_and_mint(&mut self, token_owner_id: AccountId, refund: Option<AccountId>) -> Token {
         let id = self.raffle.draw();
-        self.internal_mint(id.to_string(), token_owner_id, refund)
+
+        let token_id = id + 1;
+        let current_timestamp = env::block_timestamp();
+        self.last_claim_points
+            .insert(&token_id.to_string(), &current_timestamp);
+        self.internal_mint(token_id.to_string(), token_owner_id, refund)
     }
 
     fn internal_mint(

@@ -3,19 +3,19 @@ import { readFile } from "fs/promises";
 import { Context } from "near-cli/context";
 import * as tenk from "..";
 import { binPath } from "./utils";
-import {icon} from "./icon";
+import { icon } from "./icon";
 
 const metadata: tenk.InitialMetadata = {
-  uri: "https://bafybeihmtke7glg2aec5oav5btzlv6ec4fxkbbh4xjre4x5ipaqdxroahe.ipfs.dweb.link",
-  name: "TENK NFT",
-  symbol: "TENK",
+  uri: "https://bafybeiadt7nkds3prkla2kvx4itchfqxja3znl6b4i4lkqq6gxrieycz2e.ipfs.dweb.link/",
+  name: "Membership BeBot",
+  symbol: "MBB",
   icon,
 };
 
-const size = 10_000;
- 
+const size = 888;
+
 const sale: tenk.Sale = {
-  price: NEAR.parse("1 N").toJSON(),
+  price: NEAR.parse("0 N").toJSON(),
   // presale_price: NEAR.parse("6 N").toJSON(),
   mint_rate_limit: 6,
   // presale_start: Date.parse("05 April 2022 4:00 PM UTC"),
@@ -38,40 +38,39 @@ const sale: tenk.Sale = {
   // },
 };
 
-
 export async function main({ account, nearAPI, argv, near }: Context) {
   let { Account } = nearAPI;
-  const contractBytes = await readFile(binPath("tenk"));
+  // const contractBytes = await readFile(binPath("tenk"));
 
   let [contractId] = argv ?? [];
   contractId = contractId ?? account.accountId;
   let contractAccount = new Account(near.connection, contractId);
 
-  const isTestnet = contractId.endsWith("testnet");
-  if (isTestnet) {
-    sale.initial_royalties = null;
-    sale.public_sale_start = Date.now();
-  }
+  const isTestnet = true;
+  // if (isTestnet) {
+  //   sale.initial_royalties = null;
+  //   sale.public_sale_start = Date.now();
+  // }
 
   const initialArgs = {
     owner_id: account.accountId,
     metadata,
     size,
     sale,
+    arkana_core_contract: "dev-1686807220607-86839522612199",
+    max_points: "3600",
+    point_per_seconds: "5",
   };
 
   const contract = new tenk.Contract(account, contractId);
 
-  const tx = account
-    .createTransaction(contractId)
-    .deployContract(contractBytes);
+  const tx = account.createTransaction(contractId);
 
-  if (await contractAccount.hasDeployedContract()) {
-    console.log(`initializing with: \n${JSON.stringify(initialArgs, null, 2)}`);
-    tx.actions.push(
-      contract.new_default_metaTx(initialArgs, { gas: Gas.parse("50Tgas") })
-    );
-  }
+  console.log(`initializing with: \n${JSON.stringify(initialArgs, null, 2)}`);
+  tx.actions.push(
+    contract.new_default_metaTx(initialArgs, { gas: Gas.parse("50Tgas") })
+  );
+
   let res = await tx.signAndSend();
   console.log(
     `https://explorer${isTestnet ? ".testnet" : ""}.near.org/transactions/${
