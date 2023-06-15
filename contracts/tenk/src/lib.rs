@@ -284,6 +284,11 @@ impl Contract {
         self.point_per_seconds = point_per_seconds.0;
     }
 
+    #[private]
+    pub fn set_arkana_core_contract(&mut self, arkana_core_contract: AccountId) {
+        self.arkana_core_contract = arkana_core_contract;
+    }
+
     pub fn claim_points(&mut self, token_id: TokenId) -> Promise {
         let predecessor_id = env::predecessor_account_id();
 
