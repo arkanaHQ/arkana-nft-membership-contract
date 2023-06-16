@@ -183,7 +183,7 @@ impl Contract {
         if let Some(limit) = self.sale.mint_rate_limit {
             require!(num <= limit, "over mint limit");
         }
-        let owner_id = &env::signer_account_id();
+        let owner_id = &env::predecessor_account_id();
         let num = self.assert_can_mint(owner_id, num);
         let tokens = self.nft_mint_many_ungaurded(num, owner_id, false);
         self.use_whitelist_allowance(owner_id, num);
