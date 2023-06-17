@@ -184,6 +184,12 @@ impl Contract {
             require!(num <= limit, "over mint limit");
         }
         let owner_id = &env::predecessor_account_id();
+
+        assert_eq!(
+            self.tokens.nft_supply_for_owner(owner_id.clone()).0,
+            0,
+            "You already have membership"
+        );
         let num = self.assert_can_mint(owner_id, num);
         let tokens = self.nft_mint_many_ungaurded(num, owner_id, false);
         self.use_whitelist_allowance(owner_id, num);
